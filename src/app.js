@@ -77,7 +77,7 @@ app.use('/api/user', userRoutes);
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'Welcome to Atendify API,sdsdsdsdsdsdsdsdsdsdsdsdsdsdsdsdsdsdsdsdsd',
+    message: 'Welcome to Atendify API, working on version 2.0.0',
     version: '2.0.0',
     endpoints: {
       auth: '/api/auth',
