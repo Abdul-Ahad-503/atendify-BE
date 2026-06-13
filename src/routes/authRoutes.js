@@ -9,8 +9,11 @@ const {
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 const validate = require('../middleware/validationMiddleware');
+const db = require('../middleware/db');
 
 const router = express.Router();
+router.post('/login', db, login);
+router.post('/register', db, register);
 
 // Validation rules
 const registerValidation = [
