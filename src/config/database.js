@@ -1,43 +1,39 @@
-require('dotenv').config();
 const mongoose = require('mongoose');
 
+const MONGODB_URI = process.env.MONGODB_URI;
+
+if (!MONGODB_URI) {
+  throw new Error('MONGODB_URI is not defined');
+}
+
+// cache connection across invocations
+let cached = global.mongoose;
+
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
+
 const connectDB = async () => {
-  try {
-    console.log('🔍 MONGODB_URI exists:', !!process.env.MONGODB_URI);
-    console.log('🔍 MONGODB_URI length:', process.env.MONGODB_URI?.length);
-    console.log('🔍 Attempting connection to MongoDB...');
-    
-    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+  if (cached.conn) {
+    return cached.conn;
+  }
+
+  if (!cached.promise) {
+    cached.promise = mongoose.connect(MONGODB_URI, {
       serverSelectionTimeoutMS: 30000,
       socketTimeoutMS: 45000,
-      family: 4, // Force IPv4 (Windows DNS resolution fix)
+      family: 4,
     });
-    
-    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
-    console.log(`📦 Database: ${conn.connection.name}`);
-    
-    // Handle connection events
-    mongoose.connection.on('error', (err) => {
-      console.error('❌ MongoDB connection error:', err);
-    });
-    
-    mongoose.connection.on('disconnected', () => {
-      console.log('MongoDB disconnected');
-    });
-    
-    // Graceful shutdown
-    process.on('SIGINT', async () => {
-      await mongoose.connection.close();
-      console.log('MongoDB connection closed due to app termination');
-      process.exit(0);
-    });
-    
-  } catch (error) {
-    console.error('❌ MongoDB connection failed:', error.message);
-    console.error('❌ Error name:', error.name);
-    console.error('❌ Full error:', error);
-    process.exit(1);
   }
+
+  try {
+    cached.conn = await cached.promise;
+  } catch (err) {
+    cached.promise = null;
+    throw err;
+  }
+
+  return cached.conn;
 };
 
 module.exports = connectDB;
