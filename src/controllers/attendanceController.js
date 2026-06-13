@@ -1,0 +1,375 @@
+const AttendancePayload = require('../models/AttendancePayload');
+const Attendance = require('../models/Attendance');
+const Meeting = require('../models/Meeting');
+const CourseOffering = require('../models/CourseOffering');
+const { sendSuccess, sendError } = require('../utils/responseUtils');
+const { sendAttendancePush } = require('../services/notificationService');
+
+const {
+    findEnrolledStudents,
+    markAttendance,
+    getAttendanceForMeeting,
+    getStudentAttendanceHistory,
+    getAttendanceStats
+} = require('../services/attendanceService');
+const mongoose = require('mongoose');
+
+/**
+ * Teacher initiates attendance session for a meeting
+ * Stores teacher's location and triggers attendance call to enrolled students
+ * POST /api/attendance/teacher/start
+ */
+const startAttendanceSession = async (req, res) => {
+    try {
+        const { meetingId, location, details, deviceInfo } = req.body;
+        const teacherId = req.user._id;
+
+        // Validate required fields
+        if (!meetingId) {
+            return sendError(res, 400, 'meetingId is required');
+        }
+
+        const latitude = location?.latitude;
+        const longitude = location?.longitude;
+
+        if (latitude === undefined || longitude === undefined) {
+            return sendError(res, 400, 'location.latitude and location.longitude are required');
+        }
+
+        const latNum = Number(latitude);
+        const lonNum = Number(longitude);
+
+        if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
+            return sendError(res, 400, 'location.latitude and location.longitude must be valid numbers');
+        }
+
+        // Verify meeting exists and belongs to this teacher
+        const meeting = await Meeting.findById(meetingId).populate('offeringId');
+        if (!meeting) {
+            return sendError(res, 404, 'Meeting not found');
+        }
+
+        if (String(meeting.teacherId) !== String(teacherId)) {
+            return sendError(res, 403, 'You are not authorized to mark attendance for this meeting');
+        }
+
+        // Find enrolled students for this offering
+        const offering = meeting.offeringId;
+        const enrolledStudents = await require('../models/User').find({
+            role: 'student',
+            programId: offering.programId,
+            semester: offering.semester,
+            section: offering.section,
+            isActive: true
+        }).select('_id name email pushToken'); // pushToken included
+
+        if (enrolledStudents.length === 0) {
+            return sendSuccess(res, 200, 'Attendance session started (no enrolled students)', {
+                sessionId: meetingId,
+                enrolledStudentsCount: 0,
+                studentsNotified: []
+            });
+        }
+
+        // Save teacher's attendance trigger
+        const attendanceSession = await AttendancePayload.create({
+            teacherId,
+            classId: String(meetingId),
+            courseId: String(meeting.offeringId._id),
+            payload: {
+                action: 'START_ATTENDANCE_SESSION',
+                meetingId,
+                location: { latitude: latNum, longitude: lonNum },
+                details,
+                deviceInfo,
+                enrolledStudentsCount: enrolledStudents.length,
+                timestamp: new Date()
+            }
+        });
+        await sendAttendancePush(enrolledStudents, meetingId, details);
+
+        console.log('✅ [ATTENDANCE] Teacher started session', {
+            teacherId: String(teacherId),
+            meetingId: String(meetingId),
+            enrolledStudentsCount: enrolledStudents.length,
+            teacherLocation: { latitude: latNum, longitude: lonNum }
+        });
+
+        return sendSuccess(res, 200, 'Attendance session started successfully', {
+            sessionId: String(attendanceSession._id),
+            meetingId: String(meetingId),
+            enrolledStudentsCount: enrolledStudents.length,
+            studentsToNotify: enrolledStudents.map(s => ({
+                studentId: String(s._id),
+                name: s.name,
+                email: s.email
+            })),
+            teacherLocation: { latitude: latNum, longitude: lonNum }
+        });
+    } catch (error) {
+        console.error('❌ [ATTENDANCE] Error starting session:', error.message);
+        return sendError(res, 500, 'Failed to start attendance session', [error.message]);
+    }
+};
+
+/**
+ * Student marks attendance for a meeting
+ * Validates location within acceptable radius and creates attendance record
+ * POST /api/attendance/student/mark
+ */
+const markStudentAttendance = async (req, res) => {
+    try {
+        const { meetingId, location, radiusMeters = 10, deviceInfo } = req.body;
+        const studentId = req.user._id;
+
+        // Validate required fields
+        if (!meetingId) {
+            return sendError(res, 400, 'meetingId is required');
+        }
+
+        const latitude = location?.latitude;
+        const longitude = location?.longitude;
+
+        if (latitude === undefined || longitude === undefined) {
+            return sendError(res, 400, 'location.latitude and location.longitude are required');
+        }
+
+        const latNum = Number(latitude);
+        const lonNum = Number(longitude);
+
+        if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
+            return sendError(res, 400, 'location.latitude and location.longitude must be valid numbers');
+        }
+
+        if (!Number.isFinite(radiusMeters) || radiusMeters < 5) {
+            return sendError(res, 400, 'radiusMeters must be a valid number >= 5');
+        }
+
+        // Fetch meeting with location info (assume room has coordinates stored elsewhere or use default)
+        const meeting = await Meeting.findById(meetingId).populate('offeringId');
+        if (!meeting) {
+            return sendError(res, 404, 'Meeting not found');
+        }
+
+        // Check if student is enrolled in this course offering
+        const student = await require('../models/User').findById(studentId);
+        const offering = meeting.offeringId;
+
+        if (String(student.programId) !== String(offering.programId) ||
+            student.semester !== offering.semester ||
+            student.section !== offering.section) {
+            return sendError(res, 403, 'You are not enrolled in this course');
+        }
+
+        // For now, use teacher's location as class location (in future, store room coordinates)
+        // Get teacher's latest location from recent attendance payload
+        const teacherPayload = await AttendancePayload.findOne({
+            teacherId: meeting.teacherId,
+            classId: String(meetingId)
+        }).sort({ createdAt: -1 });
+
+        if (!teacherPayload || !teacherPayload.payload.location) {
+            return sendError(res, 400, 'Teacher has not started attendance session yet');
+        }
+
+        const classLocation = teacherPayload.payload.location;
+
+        // Mark attendance
+        const attendance = await markAttendance({
+            meetingId: new mongoose.Types.ObjectId(meetingId),
+            studentId: new mongoose.Types.ObjectId(studentId),
+            studentLocation: { latitude: latNum, longitude: lonNum },
+            classLocation: { latitude: classLocation.latitude, longitude: classLocation.longitude },
+            radiusMeters,
+            metadata: { deviceInfo, requestPayload: req.body }
+        });
+
+        console.log('✅ [ATTENDANCE] Student marked attendance', {
+            studentId: String(studentId),
+            meetingId: String(meetingId),
+            status: attendance.status,
+            distance: `${attendance.distanceMeters}m`,
+            withinRadius: attendance.withinRadius
+        });
+
+        return sendSuccess(res, 200, 'Attendance marked successfully', {
+            attendanceId: String(attendance._id),
+            status: attendance.status,
+            distance: `${attendance.distanceMeters}m`,
+            withinRadius: attendance.withinRadius,
+            radiusMeters: attendance.radiusMeters,
+            markedAt: attendance.markedAt
+        });
+    } catch (error) {
+        console.error('❌ [ATTENDANCE] Error marking student attendance:', error.message);
+        return sendError(res, 500, 'Failed to mark attendance', [error.message]);
+    }
+};
+
+/**
+ * Get attendance records for a specific meeting
+ * GET /api/attendance/meeting/:meetingId
+ */
+const getAttendanceByMeeting = async (req, res) => {
+    try {
+        const { meetingId } = req.params;
+
+        const attendance = await getAttendanceForMeeting(meetingId);
+
+        const summary = {
+            total: attendance.length,
+            present: attendance.filter(a => a.status === 'present').length,
+            absent: attendance.filter(a => a.status === 'absent').length,
+            late: attendance.filter(a => a.status === 'late').length,
+            avgDistance: attendance.length > 0 ?
+                Math.round(attendance.reduce((sum, a) => sum + a.distanceMeters, 0) / attendance.length) :
+                0
+        };
+
+        return sendSuccess(res, 200, 'Attendance records fetched', {
+            summary,
+            records: attendance
+        });
+    } catch (error) {
+        console.error('❌ [ATTENDANCE] Error fetching meeting attendance:', error.message);
+        return sendError(res, 500, 'Failed to fetch attendance', [error.message]);
+    }
+};
+
+/**
+ * Get student's attendance history
+ * GET /api/attendance/student/history
+ */
+const getStudentHistory = async (req, res) => {
+    try {
+        const { termId, offeringId, startDate, endDate } = req.query;
+        const studentId = req.user._id;
+
+        const filters = {};
+        if (termId) filters.termId = termId;
+        if (offeringId) filters.offeringId = offeringId;
+        if (startDate) filters.startDate = startDate;
+        if (endDate) filters.endDate = endDate;
+
+        const history = await getStudentAttendanceHistory(studentId, filters);
+
+        return sendSuccess(res, 200, 'Attendance history retrieved', {
+            total: history.length,
+            records: history
+        });
+    } catch (error) {
+        console.error('❌ [ATTENDANCE] Error fetching history:', error.message);
+        return sendError(res, 500, 'Failed to fetch attendance history', [error.message]);
+    }
+};
+
+/**
+ * Get attendance statistics for a course offering
+ * GET /api/attendance/stats/offering/:offeringId
+ */
+const getOfferingStats = async (req, res) => {
+    try {
+        const { offeringId } = req.params;
+
+        const stats = await getAttendanceStats(offeringId);
+
+        return sendSuccess(res, 200, 'Attendance statistics retrieved', {
+            totalStudents: stats.length,
+            stats
+        });
+    } catch (error) {
+        console.error('❌ [ATTENDANCE] Error fetching stats:', error.message);
+        return sendError(res, 500, 'Failed to fetch attendance statistics', [error.message]);
+    }
+};
+
+/**
+ * (Legacy) Record raw attendance payload from mobile app
+ * POST /api/attendance/teacher/mark
+ */
+const markTeacherAttendance = async (req, res) => {
+    try {
+        const { classId, courseId, location } = req.body;
+
+        if (!classId) {
+            return sendError(res, 400, 'classId is required');
+        }
+
+        if (!courseId) {
+            return sendError(res, 400, 'courseId is required');
+        }
+
+        const latitude = location?.latitude;
+        const longitude = location?.longitude;
+
+        if (latitude === undefined || longitude === undefined) {
+            return sendError(res, 400, 'location.latitude and location.longitude are required');
+        }
+
+        const latNum = Number(latitude);
+        const lonNum = Number(longitude);
+
+        if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
+            return sendError(res, 400, 'location.latitude and location.longitude must be numbers');
+        }
+
+        await AttendancePayload.create({
+            teacherId: req.user._id,
+            classId: String(classId),
+            courseId: String(courseId),
+            payload: req.body
+        });
+
+        console.log('📥 [ATTENDANCE] Teacher payload received', {
+            teacherId: req.user._id,
+            classId: String(classId),
+            courseId: String(courseId)
+        });
+
+        return sendSuccess(res, 200, 'Attendance payload received', { received: true });
+    } catch (error) {
+        return sendError(res, 500, 'Failed to record attendance payload', [error.message]);
+    }
+};
+const endAttendanceSession = async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+
+        await AttendancePayload.findByIdAndUpdate(sessionId, {
+            'payload.status': 'ended',
+            'payload.endedAt': new Date()
+        });
+
+        return sendSuccess(res, 200, 'Session ended successfully');
+    } catch (error) {
+        return sendError(res, 500, 'Failed to end session', [error.message]);
+    }
+};
+const checkActiveSession = async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+
+    const session = await AttendancePayload.findOne({
+      classId: String(meetingId),
+      'payload.status': { $ne: 'ended' }
+    }).sort({ createdAt: -1 });
+
+    return sendSuccess(res, 200, 'Session status fetched', {
+      isActive: !!session,
+      sessionId: session ? String(session._id) : null
+    });
+  } catch (error) {
+    return sendError(res, 500, 'Failed to check session', [error.message]);
+  }
+};
+module.exports = {
+    startAttendanceSession,
+    markStudentAttendance,
+    getAttendanceByMeeting,
+    getStudentHistory,
+    getOfferingStats,
+    markTeacherAttendance, // Legacy
+    endAttendanceSession,
+    checkActiveSession
+
+};

@@ -1,0 +1,444 @@
+now here is proper prompt according to my front end. change code if needed according to this: 
+
+You are a senior backend engineer. Design and generate a complete backend for a mobile-based Automatic Attendance System called "Atendify" using Node.js, Express.js, and MongoDB (Mongoose).
+
+The backend must be production-structured, secure, and suitable for a Final Year Project (FYP).
+
+========================
+TECH STACK
+========================
+- Node.js
+- Express.js
+- MongoDB with Mongoose
+- JWT-based authentication
+- RESTful APIs
+- MVC folder structure
+- Environment variables (.env)
+
+========================
+USER ROLES
+========================
+1. Student
+2. Teacher
+3. Admin (optional for FYP scope)
+
+========================
+FRONTEND FEATURES TO SUPPORT
+========================
+
+STUDENT MODULE:
+- Dashboard: Current/next class, today's schedule, attendance summary (present/late/absent counts), overall attendance percentage
+- Timetable: Weekly schedule with subject, teacher, time, room for each day
+- Attendance History: Filter by all/present/late/absent, shows date, subject, status, time marked, auto/manual indicator, distance verification
+- Statistics: Overall percentage, monthly trends (last 5 months), subject-wise attendance breakdown, low attendance warnings (<75%)
+- Profile: Name, Student ID, Email, Course (BS Computer Science), Semester, Overall attendance percentage
+- Notifications: Attendance marked alerts, class reminders (30 mins before), low attendance warnings, permission alerts
+
+TEACHER MODULE:
+- Dashboard: Current live class with real-time present/late/absent counts, today's classes list with status (completed/upcoming), quick stats (total classes, total students, average attendance)
+- Timetable: Weekly schedule with subject, course/semester, time, room, student count for each class
+- Class History: Past classes with date, subject, course, present/late/absent counts, attendance percentage
+- Reports: Average attendance across classes, class-wise trends, low attendance student alerts with student name, ID, subject, attendance percentage
+- Profile: Name, Employee ID, Email, Department, Subjects taught, Number of active classes
+- Notifications: Class completion summaries, low attendance student alerts, upcoming class reminders, weekly report notifications
+
+========================
+CORE FUNCTIONAL REQUIREMENTS
+========================
+
+1. AUTHENTICATION & AUTHORIZATION
+- Student signup: name, student ID, email, password, course, semester, department
+- Teacher signup: name, employee ID, email, password, department, subjects
+- Login for both roles with email/password
+- JWT token generation and verification
+- Role-based access control
+- Secure password hashing (bcrypt)
+- Middleware for protected routes
+
+2. STUDENT MANAGEMENT
+- Student profile: ID, name, email, course, semester, department
+- Assign students to multiple courses/subjects
+- Track overall attendance percentage
+- Enable/disable student accounts
+
+3. TEACHER MANAGEMENT
+- Teacher profile: Employee ID, name, email, department, subjects taught
+- Assign teachers to courses
+- Track classes taught
+- Number of active classes
+
+4. COURSE & SUBJECT MANAGEMENT
+- Course: name, code, semester, department
+- Subject: name, code, teacher assigned
+- Student enrollment in subjects
+
+5. ROOM & LOCATION MANAGEMENT
+- Room: name/number, latitude, longitude
+- Geofence radius configuration (default 10-30 meters)
+- Building/floor information (optional)
+
+6. TIMETABLE MANAGEMENT
+- Weekly schedule entries with:
+  - Subject ID
+  - Teacher ID
+  - Student group (course + semester)
+  - Room ID (with geolocation)
+  - Day of week (Monday-Friday)
+  - Start time
+  - End time
+  - Duration
+- API to fetch student's weekly timetable
+- API to fetch teacher's weekly timetable with student counts
+- API to fetch today's classes for dashboard
+
+7. LOCATION & ATTENDANCE LOGIC (CRITICAL - FYP CORE)
+- Teacher session management:
+  - Start class session (manual or auto-triggered by timetable)
+  - End class session
+  - Live session status
+- Student attendance submission:
+  - Submit location during active class time
+  - Backend validates:
+    * Current time within class start-end window
+    * Student enrolled in the course
+    * Teacher session is active
+    * Distance from student to room location (Haversine formula)
+    * Distance from student to teacher device location
+    * Not already marked for this class today
+  - Late threshold: configurable (e.g., 15 minutes after start time)
+  - Mark as: Present, Late, or reject if outside geofence
+- Automatic Absent marking:
+  - Cron job or scheduled task to mark absent for students who didn't submit attendance after class ends
+- Distance calculation using Haversine formula
+- Configurable distance thresholds:
+  - Room geofence radius: 20-50 meters
+  - Student-teacher proximity: 15-30 meters
+- Store attendance with: timestamp, status, method (auto), distance from room, distance from teacher
+
+8. ATTENDANCE RECORDS
+- Schema: student ID, subject ID, teacher ID, date, status (present/late/absent), time marked, method (auto/manual), distance_from_room, distance_from_teacher, session_id
+- Prevent duplicate attendance for same student-subject-date
+- Calculate attendance percentage per subject
+- Calculate overall attendance percentage
+- Subject-wise attendance breakdown
+- Monthly attendance trends (last 5 months)
+
+9. BACKGROUND AUTOMATION SUPPORT
+- Timetable-based triggers (not continuous tracking)
+- Lightweight location submission endpoints
+- Optimized for mobile background execution
+- Store only attendance result, not continuous location data
+
+10. DASHBOARD & STATISTICS APIS
+
+STUDENT:
+- GET /api/student/dashboard
+  - Today's classes (current, next, all)
+  - Live class status
+  - Attendance summary: present/late/absent counts
+  - Overall attendance percentage
+- GET /api/student/attendance/history
+  - Filter by: all, present, late, absent, date range, subject
+  - Paginated results
+  - Each record: date, subject, status, time, method, distance
+- GET /api/student/statistics
+  - Overall percentage
+  - Monthly trend (last 5 months)
+  - Subject-wise breakdown with percentages
+  - Low attendance warnings
+
+TEACHER:
+- GET /api/teacher/dashboard
+  - Today's classes with status
+  - Current live class with real-time attendance counts
+  - Quick stats: total classes, total students, average attendance
+- GET /api/teacher/class/live/:classId
+  - Real-time attendance for active class
+  - Student list with status (present/late/absent/pending)
+  - Present/late/absent counts
+- GET /api/teacher/class/history
+  - Past classes with date, subject, course
+  - Attendance summary per class
+  - Attendance percentage
+- GET /api/teacher/reports
+  - Average attendance across all classes
+  - Class-wise trends
+  - Low attendance students (below 75%)
+  - Student name, ID, subject, attendance percentage
+
+11. NOTIFICATION MANAGEMENT
+- Create notification records for:
+  - Student: attendance marked, class reminders (30 min before), low attendance warnings
+  - Teacher: class completion, low attendance alerts, upcoming class reminders
+- GET /api/notifications (role-based)
+- Mark notifications as read
+- Notification types: success, warning, info, error
+
+12. MANUAL ATTENDANCE (Optional)
+- Teacher can manually mark/update attendance
+- Override auto-marked attendance
+- Add notes to attendance record
+
+========================
+DATABASE MODELS (MONGOOSE)
+========================
+
+1. User Schema:
+   - role: enum ['student', 'teacher', 'admin']
+   - email, password (hashed)
+   - name
+   - student_id (if student)
+   - employee_id (if teacher)
+   - course, semester (if student)
+   - department
+   - subjects_taught (if teacher)
+   - is_active
+   - created_at, updated_at
+
+2. Subject Schema:
+   - name, code
+   - department
+   - semester
+   - teacher_id (ref: User)
+   - enrolled_students (array of student IDs)
+
+3. Room Schema:
+   - name, number
+   - building, floor
+   - latitude, longitude
+   - geofence_radius (meters)
+
+4. Timetable Schema:
+   - subject_id (ref: Subject)
+   - teacher_id (ref: User)
+   - room_id (ref: Room)
+   - course, semester (for student filtering)
+   - day_of_week (enum: Monday-Friday)
+   - start_time, end_time
+   - duration (minutes)
+   - is_active
+
+5. TeacherSession Schema:
+   - timetable_id (ref: Timetable)
+   - teacher_id (ref: User)
+   - subject_id (ref: Subject)
+   - room_id (ref: Room)
+   - teacher_latitude, teacher_longitude
+   - session_date
+   - start_time, end_time
+   - status (enum: scheduled, live, ended)
+   - students_present, students_late, students_absent
+
+6. Attendance Schema:
+   - student_id (ref: User)
+   - subject_id (ref: Subject)
+   - teacher_id (ref: User)
+   - session_id (ref: TeacherSession)
+   - date
+   - status (enum: present, late, absent)
+   - time_marked
+   - method (enum: auto, manual)
+   - student_latitude, student_longitude
+   - distance_from_room (meters)
+   - distance_from_teacher (meters)
+   - is_verified
+   - notes
+   - Unique index: student_id + subject_id + date
+
+7. Notification Schema:
+   - user_id (ref: User)
+   - type (enum: success, warning, info, error)
+   - title, message
+   - related_model (attendance, class, etc.)
+   - related_id
+   - is_read
+   - created_at
+
+8. AttendancePercentage Schema (denormalized for performance):
+   - student_id (ref: User)
+   - subject_id (ref: Subject)
+   - total_classes
+   - present_count
+   - late_count
+   - absent_count
+   - percentage
+   - last_updated
+
+========================
+CRITICAL ATTENDANCE VALIDATION FLOW
+========================
+1. Student submits location during class time
+2. Backend checks:
+   - Is there an active TeacherSession for this time/subject?
+   - Is student enrolled in this subject?
+   - Is current time within class start-end window?
+   - Is student within room geofence? (Haversine distance calculation)
+   - Is student within teacher proximity range?
+   - Has student already been marked today for this subject?
+3. Calculate status:
+   - If within first X minutes (e.g., 15 min): Present
+   - If after X minutes but before class end: Late
+   - If outside geofence: Reject
+4. Create attendance record with all details
+5. Update TeacherSession counters
+6. Send notification to student
+7. Update AttendancePercentage cache
+
+========================
+KEY API ENDPOINTS
+========================
+
+AUTH:
+POST /api/auth/signup/student
+POST /api/auth/signup/teacher
+POST /api/auth/login
+POST /api/auth/logout
+GET /api/auth/me (protected)
+
+STUDENT:
+GET /api/student/dashboard
+GET /api/student/timetable
+GET /api/student/timetable/today
+GET /api/student/attendance/history
+GET /api/student/attendance/statistics
+GET /api/student/profile
+PUT /api/student/profile
+POST /api/student/attendance/submit (with location)
+
+TEACHER:
+GET /api/teacher/dashboard
+GET /api/teacher/timetable
+GET /api/teacher/timetable/today
+GET /api/teacher/classes
+GET /api/teacher/class/:id/attendance
+GET /api/teacher/class/history
+GET /api/teacher/reports
+GET /api/teacher/reports/low-attendance
+GET /api/teacher/profile
+PUT /api/teacher/profile
+POST /api/teacher/session/start
+POST /api/teacher/session/end/:sessionId
+PUT /api/teacher/attendance/manual (manual override)
+
+ADMIN (Optional):
+POST /api/admin/user/create
+PUT /api/admin/user/:id
+DELETE /api/admin/user/:id
+POST /api/admin/subject/create
+POST /api/admin/room/create
+POST /api/admin/timetable/create
+GET /api/admin/statistics
+
+NOTIFICATIONS:
+GET /api/notifications
+PUT /api/notifications/:id/read
+PUT /api/notifications/mark-all-read
+
+========================
+PROJECT STRUCTURE
+========================
+/atendify-backend
+├── .env
+├── .gitignore
+├── package.json
+├── server.js
+└── src/
+    ├── config/
+    │   ├── db.js
+    │   └── constants.js
+    ├── models/
+    │   ├── User.js
+    │   ├── Subject.js
+    │   ├── Room.js
+    │   ├── Timetable.js
+    │   ├── TeacherSession.js
+    │   ├── Attendance.js
+    │   ├── AttendancePercentage.js
+    │   └── Notification.js
+    ├── controllers/
+    │   ├── authController.js
+    │   ├── studentController.js
+    │   ├── teacherController.js
+    │   ├── attendanceController.js
+    │   ├── timetableController.js
+    │   └── notificationController.js
+    ├── routes/
+    │   ├── authRoutes.js
+    │   ├── studentRoutes.js
+    │   ├── teacherRoutes.js
+    │   ├── attendanceRoutes.js
+    │   ├── timetableRoutes.js
+    │   └── notificationRoutes.js
+    ├── middleware/
+    │   ├── auth.js
+    │   ├── roleCheck.js
+    │   ├── errorHandler.js
+    │   └── validation.js
+    ├── services/
+    │   ├── attendanceService.js
+    │   ├── locationService.js
+    │   ├── notificationService.js
+    │   └── statisticsService.js
+    ├── utils/
+    │   ├── haversine.js
+    │   ├── dateHelpers.js
+    │   └── responseHandler.js
+    └── app.js
+
+========================
+BEST PRACTICES
+========================
+- Clean, readable code with comments
+- Comprehensive error handling
+- Input validation (express-validator)
+- Async/await for database operations
+- Proper HTTP status codes
+- Security: helmet, cors, rate limiting
+- Password hashing with bcrypt (salt rounds: 10)
+- JWT expiry: 7 days
+- Distance thresholds configurable via environment
+- Indexing on frequently queried fields
+- Pagination for large datasets
+- FYP-friendly code comments explaining logic
+- Realistic for mobile background execution
+- No continuous location tracking
+
+========================
+ENVIRONMENT VARIABLES
+========================
+NODE_ENV=development
+PORT=5000
+MONGO_URI=mongodb://localhost:27017/atendify
+JWT_SECRET=your_jwt_secret
+JWT_EXPIRE=7d
+ROOM_GEOFENCE_RADIUS=25
+TEACHER_PROXIMITY_RADIUS=20
+LATE_THRESHOLD_MINUTES=15
+LOW_ATTENDANCE_THRESHOLD=75
+
+========================
+OUTPUT REQUIRED
+========================
+1. Complete backend code for all files
+2. API documentation with:
+   - Endpoint URL
+   - Method
+   - Request body/params
+   - Response format
+   - Sample request/response
+3. Detailed explanation of:
+   - Attendance validation logic with distance calculation
+   - How auto-attendance works
+   - Late marking logic
+   - Absent marking process
+4. MongoDB schema relationships diagram (text format)
+5. Sample data for testing
+6. Deployment instructions for production
+
+The solution must be:
+- Production-ready and scalable
+- Defendable in FYP viva
+- Aligned with mobile OS background limitations
+- No unnecessary complexity
+- Clear code comments
+- Realistic distance-based validation
