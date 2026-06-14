@@ -362,6 +362,49 @@ const checkActiveSession = async (req, res) => {
     return sendError(res, 500, 'Failed to check session', [error.message]);
   }
 };
+/**
+ * TEST ONLY: Send test notification to a student
+ * POST /api/attendance/test/notify-student
+ * Body: { studentId, meetingId, courseName, courseCode }
+ */
+const sendTestNotification = async (req, res) => {
+  try {
+    const { studentId, meetingId, courseName, courseCode } = req.body;
+
+    if (!studentId || !meetingId) {
+      return sendError(res, 400, 'studentId and meetingId are required');
+    }
+
+    // Simulate notification payload
+    const notificationPayload = {
+      type: 'ATTENDANCE_SESSION_STARTED',
+      title: 'Attendance Session Started',
+      message: `Your teacher started attendance for ${courseName}`,
+      data: {
+        meetingId: meetingId,
+        courseName: courseName,
+        courseCode: courseCode,
+        timestamp: new Date().toISOString()
+      }
+    };
+
+    console.log('📨 [TEST] Sending notification to student:', {
+      studentId: studentId,
+      payload: notificationPayload
+    });
+
+    // In future, this will send via FCM/APNs
+    // For now, just log and return
+    return sendSuccess(res, 200, 'Test notification sent', {
+      notificationPayload: notificationPayload,
+      studentsNotified: [studentId],
+      message: 'In production, this would be sent via Firebase/APNs'
+    });
+  } catch (error) {
+    return sendError(res, 500, 'Failed to send test notification', [error.message]);
+  }
+};
+
 module.exports = {
     startAttendanceSession,
     markStudentAttendance,
@@ -370,6 +413,7 @@ module.exports = {
     getOfferingStats,
     markTeacherAttendance, // Legacy
     endAttendanceSession,
-    checkActiveSession
+    checkActiveSession,
+    sendTestNotification
 
 };

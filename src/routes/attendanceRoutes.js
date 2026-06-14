@@ -9,7 +9,8 @@ const {
     getOfferingStats,
     markTeacherAttendance,
     endAttendanceSession,
-    checkActiveSession
+    checkActiveSession,
+    sendTestNotification
 } = require('../controllers/attendanceController');
 
 // ============ TEACHER ROUTES ============
@@ -23,6 +24,7 @@ router.get('/active-session/:meetingId', protect, checkActiveSession);
 router.post('/teacher/mark', protect, authorize('teacher'), markTeacherAttendance);
 
 router.post('/session/:sessionId/end', protect, endAttendanceSession);
+router.post('/test/notify-student', protect, sendTestNotification);
 
 
 // ============ STUDENT ROUTES ============
