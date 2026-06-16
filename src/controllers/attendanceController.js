@@ -371,7 +371,7 @@ const sendTestNotification = async (req, res) => {
   try {
     const { studentId, meetingId, courseName, courseCode } = req.body;
 
-    if (!studentId || !meetingId) {
+    if (!studentId ) {
       return sendError(res, 400, 'studentId and meetingId are required');
     }
 
