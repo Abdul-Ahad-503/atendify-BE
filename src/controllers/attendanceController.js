@@ -10,7 +10,8 @@ const {
     markAttendance,
     getAttendanceForMeeting,
     getStudentAttendanceHistory,
-    getAttendanceStats
+    getAttendanceStats,
+    getTeacherAttendanceHistory
 } = require('../services/attendanceService');
 const mongoose = require('mongoose');
 
@@ -86,7 +87,7 @@ const startAttendanceSession = async (req, res) => {
                 timestamp: new Date()
             }
         });
-        await sendAttendancePush(enrolledStudents, meetingId, details);
+        await sendAttendancePush(enrolledStudents, meetingId, details, teacherId);
 
         console.log('✅ [ATTENDANCE] Teacher started session', {
             teacherId: String(teacherId),
@@ -334,14 +335,89 @@ const markTeacherAttendance = async (req, res) => {
 const endAttendanceSession = async (req, res) => {
     try {
         const { sessionId } = req.params;
+        const teacherId = req.user._id;
 
+        // 1. Find the attendance payload session
+        const session = await AttendancePayload.findById(sessionId);
+        if (!session) {
+            return sendError(res, 404, 'Session not found');
+        }
+
+        const meetingId = session.classId;
+
+        // 2. Get meeting and offering details
+        const meeting = await Meeting.findById(meetingId).populate('offeringId');
+        if (!meeting) {
+            return sendError(res, 404, 'Meeting not found');
+        }
+
+        const offering = meeting.offeringId;
+
+        // 3. Find enrolled students
+        const enrolledStudents = await require('../models/User').find({
+            role: 'student',
+            programId: offering.programId,
+            semester: offering.semester,
+            section: offering.section,
+            isActive: true
+        }).select('_id');
+
+        let autoMarkedCount = 0;
+
+        if (enrolledStudents.length > 0) {
+            // 4. Find which enrolled students already have attendance records for this meeting
+            const existingRecords = await Attendance.find({
+                meetingId: meeting._id
+            }).select('studentId');
+
+            const existingStudentIds = new Set(
+                existingRecords.map(r => String(r.studentId))
+            );
+
+            // 5. Create absent records for those who never marked
+            const absentRecords = enrolledStudents
+                .filter(s => !existingStudentIds.has(String(s._id)))
+                .map(s => ({
+                    meetingId: meeting._id,
+                    offeringId: offering._id,
+                    studentId: s._id,
+                    teacherId: meeting.teacherId,
+                    termId: meeting.termId,
+                    status: 'absent',
+                    studentLocation: { type: 'Point', coordinates: [0, 0] },
+                    classLocation: { type: 'Point', coordinates: [0, 0] },
+                    distanceMeters: 0,
+                    withinRadius: false,
+                    radiusMeters: 0,
+                    markedAt: new Date(),
+                    meetingDate: new Date(),
+                    notes: 'Auto-marked absent on session end'
+                }));
+
+            if (absentRecords.length > 0) {
+                await Attendance.insertMany(absentRecords);
+                autoMarkedCount = absentRecords.length;
+                console.log(`✅ [ATTENDANCE] Auto-marked ${autoMarkedCount} students as absent`);
+            }
+        }
+
+        // 6. End the session
         await AttendancePayload.findByIdAndUpdate(sessionId, {
             'payload.status': 'ended',
             'payload.endedAt': new Date()
         });
 
-        return sendSuccess(res, 200, 'Session ended successfully');
+        console.log('✅ [ATTENDANCE] Session ended', {
+            sessionId: String(sessionId),
+            meetingId: String(meetingId),
+            autoMarkedAbsent: autoMarkedCount
+        });
+
+        return sendSuccess(res, 200, 'Session ended successfully', {
+            autoMarkedAbsent: autoMarkedCount
+        });
     } catch (error) {
+        console.error('❌ [ATTENDANCE] Error ending session:', error.message);
         return sendError(res, 500, 'Failed to end session', [error.message]);
     }
 };
@@ -405,6 +481,31 @@ const sendTestNotification = async (req, res) => {
     }
 };
 
+/**
+ * Get teacher's attendance history
+ * GET /api/attendance/teacher/history
+ */
+const getTeacherHistory = async (req, res) => {
+    try {
+        const { startDate, endDate, offeringId } = req.query;
+        const teacherId = req.user._id;
+
+        const filters = {};
+        if (offeringId) filters.offeringId = offeringId;
+        if (startDate) filters.startDate = startDate;
+        if (endDate) filters.endDate = endDate;
+
+        const history = await getTeacherAttendanceHistory(teacherId, filters);
+        return sendSuccess(res, 200, 'Teacher attendance history retrieved', {
+            total: history.length,
+            records: history
+        });
+    } catch (error) {
+        console.error('❌ [ATTENDANCE] Error fetching teacher history:', error.message);
+        return sendError(res, 500, 'Failed to fetch teacher history', [error.message]);
+    }
+};
+
 module.exports = {
     startAttendanceSession,
     markStudentAttendance,
@@ -414,6 +515,6 @@ module.exports = {
     markTeacherAttendance, // Legacy
     endAttendanceSession,
     checkActiveSession,
-    sendTestNotification
-
+    sendTestNotification,
+    getTeacherHistory
 };

@@ -10,7 +10,8 @@ const {
     markTeacherAttendance,
     endAttendanceSession,
     checkActiveSession,
-    sendTestNotification
+    sendTestNotification,
+    getTeacherHistory
 } = require('../controllers/attendanceController');
 
 // ============ TEACHER ROUTES ============
@@ -34,6 +35,9 @@ router.post('/student/mark', protect, authorize('student'), markStudentAttendanc
 
 // Get student's attendance history 
 router.get('/student/history', protect, authorize('student'), getStudentHistory);
+
+// Teacher attendance history
+router.get('/teacher/history', protect, authorize('teacher'), getTeacherHistory);
 
 // ============ SHARED/QUERY ROUTES ============
 

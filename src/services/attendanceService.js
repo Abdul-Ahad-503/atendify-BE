@@ -73,6 +73,7 @@ const markAttendance = async ({
     studentLocation,
     classLocation,
     radiusMeters = 10,
+    lateThresholdMinutes = 15,
     metadata = {}
 }) => {
     try {
@@ -111,6 +112,22 @@ const markAttendance = async ({
 
         const withinRadius = distance <= radiusMeters;
 
+        // Determine status based on location AND time
+        let status;
+        if (!withinRadius) {
+            status = 'absent';
+        } else {
+            const now = new Date();
+            const markMinutes = now.getHours() * 60 + now.getMinutes();
+            const lateCutoff = meeting.startMinutes + lateThresholdMinutes;
+
+            if (markMinutes <= lateCutoff) {
+                status = 'present';
+            } else {
+                status = 'late';
+            }
+        }
+
         // Get term
         const term = await Term.findById(meeting.termId);
 
@@ -121,7 +138,7 @@ const markAttendance = async ({
             studentId,
             teacherId: meeting.teacherId,
             termId: meeting.termId,
-            status: withinRadius ? 'present' : 'absent',
+            status,
             studentLocation: {
                 type: 'Point',
                 coordinates: [studentLocation.longitude, studentLocation.latitude]
@@ -134,7 +151,7 @@ const markAttendance = async ({
             withinRadius,
             radiusMeters,
             markedAt: new Date(),
-            meetingDate: new Date(), // Could be customized based on actual meeting date
+            meetingDate: new Date(),
             deviceInfo: metadata.deviceInfo || null,
             notes: metadata.notes || null,
             requestPayload: metadata.requestPayload || null
@@ -184,7 +201,13 @@ const getStudentAttendanceHistory = async (studentId, filters = {}) => {
 
         const records = await Attendance.find(query)
             .populate('meetingId', 'day timeStart timeEnd roomNo')
-            .populate('offeringId')
+            .populate({
+                path: 'offeringId',
+                populate: {
+                    path: 'courseId',
+                    select: 'code name'
+                }
+            })
             .populate('teacherId', 'name email')
             .sort({ markedAt: -1 });
 
@@ -237,11 +260,97 @@ const getAttendanceStats = async (offeringId) => {
     }
 };
 
+/**
+ * Get teacher's attendance history aggregated by meeting
+ * @param {ObjectId} teacherId
+ * @param {Object} filters - { startDate, endDate, offeringId }
+ * @returns {Array} Aggregated attendance records grouped by meeting
+ */
+const getTeacherAttendanceHistory = async (teacherId, filters = {}) => {
+    try {
+        const mongoose = require('mongoose');
+        const match = { teacherId: new mongoose.Types.ObjectId(teacherId) };
+
+        if (filters.startDate || filters.endDate) {
+            match.markedAt = {};
+            if (filters.startDate) match.markedAt.$gte = new Date(filters.startDate);
+            if (filters.endDate) match.markedAt.$lte = new Date(filters.endDate);
+        }
+        if (filters.offeringId) match.offeringId = new mongoose.Types.ObjectId(filters.offeringId);
+
+        const pipeline = [
+            { $match: match },
+            {
+                $group: {
+                    _id: { meetingId: '$meetingId', date: { $dateToString: { format: '%Y-%m-%d', date: '$meetingDate' } } },
+                    presentCount: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } },
+                    lateCount: { $sum: { $cond: [{ $eq: ['$status', 'late'] }, 1, 0] } },
+                    absentCount: { $sum: { $cond: [{ $eq: ['$status', 'absent'] }, 1, 0] } },
+                    totalRecords: { $sum: 1 },
+                    meetingDate: { $first: '$meetingDate' }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'meetings',
+                    localField: '_id.meetingId',
+                    foreignField: '_id',
+                    as: 'meeting'
+                }
+            },
+            { $unwind: '$meeting' },
+            {
+                $lookup: {
+                    from: 'courseofferings',
+                    localField: 'meeting.offeringId',
+                    foreignField: '_id',
+                    as: 'offering'
+                }
+            },
+            { $unwind: '$offering' },
+            {
+                $lookup: {
+                    from: 'courses',
+                    localField: 'offering.courseId',
+                    foreignField: '_id',
+                    as: 'course'
+                }
+            },
+            { $unwind: { path: '$course', preserveNullAndEmptyArrays: true } },
+            {
+                $project: {
+                    _id: 0,
+                    meetingId: '$_id.meetingId',
+                    date: '$_id.date',
+                    courseCode: '$course.code',
+                    courseName: '$course.name',
+                    section: '$offering.section',
+                    semester: '$offering.semester',
+                    day: '$meeting.day',
+                    timeStart: '$meeting.timeStart',
+                    timeEnd: '$meeting.timeEnd',
+                    roomNo: '$meeting.roomNo',
+                    present: '$presentCount',
+                    late: '$lateCount',
+                    absent: '$absentCount',
+                    total: '$totalRecords'
+                }
+            },
+            { $sort: { date: -1 } }
+        ];
+
+        return await Attendance.aggregate(pipeline);
+    } catch (error) {
+        throw new Error(`Failed to fetch teacher history: ${error.message}`);
+    }
+};
+
 module.exports = {
     calculateDistance,
     findEnrolledStudents,
     markAttendance,
     getAttendanceForMeeting,
     getStudentAttendanceHistory,
-    getAttendanceStats
+    getAttendanceStats,
+    getTeacherAttendanceHistory
 };
