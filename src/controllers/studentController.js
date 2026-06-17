@@ -146,17 +146,72 @@ const getDashboard = async (req, res) => {
         }
       }));
     
+    // Compute real attendance stats
+    const Attendance = require('../models/Attendance');
+    const allOfferingIds = offerings.map(o => o._id);
+    let totalClassesAttended = 0;
+    let totalClasses = 0;
+    let presentToday = 0;
+    let criticalCourses = 0;
+    const attendanceOverview = [];
+
+    for (const offering of offerings) {
+      const meetings = await Meeting.find({ offeringId: offering._id }).select('_id');
+      const meetingIds = meetings.map(m => m._id);
+
+      if (meetingIds.length === 0) continue;
+
+      const records = await Attendance.find({
+        studentId: student._id,
+        meetingId: { $in: meetingIds }
+      });
+
+      const classesAttended = records.filter(r => r.status === 'present' || r.status === 'late').length;
+      const total = Math.max(records.length, meetings.length);
+      const percentage = total > 0 ? Math.round((classesAttended / total) * 100) : 0;
+
+      totalClassesAttended += classesAttended;
+      totalClasses += total;
+
+      attendanceOverview.push({
+        id: offering._id,
+        course: {
+          id: offering.courseId._id,
+          courseCode: offering.courseId.code,
+          courseName: offering.courseId.name
+        },
+        classesAttended,
+        totalClasses: total,
+        percentage,
+        status: percentage < 75 ? 'critical' : percentage < 85 ? 'warning' : 'good'
+      });
+
+      if (percentage < 75) criticalCourses++;
+
+      // Check if marked present today
+      const todayStr = new Date().toISOString().split('T')[0];
+      const todayRecords = records.filter(r => {
+        const recordDate = new Date(r.markedAt).toISOString().split('T')[0];
+        return recordDate === todayStr;
+      });
+      if (todayRecords.some(r => r.status === 'present' || r.status === 'late')) {
+        presentToday++;
+      }
+    }
+
+    const averageAttendance = totalClasses > 0 ? Math.round((totalClassesAttended / totalClasses) * 100) : 0;
+
     sendSuccess(res, 200, 'Dashboard data retrieved successfully', {
       upcomingClasses,
       todayClasses,
-      attendanceOverview: [], // TODO: Implement when Attendance model is created
+      attendanceOverview,
       recentAttendance: [], // TODO: Implement when Attendance model is created
       notifications: [], // TODO: Implement when Notification model is created
       stats: {
         totalCourses: offerings.length,
-        averageAttendance: 0, // TODO: Calculate when attendance tracking is implemented
-        presentToday: 0,
-        criticalCourses: 0
+        averageAttendance,
+        presentToday,
+        criticalCourses
       }
     });
     

@@ -329,9 +329,34 @@ const updatePassword = async (req, res) => {
  * @access  Private
  */
 const logout = async (req, res) => {
-  console.log('🚪 [AUTH] Logout API called - User ID:', req.user?._id);
-  // In JWT, logout is handled on client side by removing token
-  // This endpoint is just for consistency
+  const userId = req.user?._id;
+  const userRole = req.user?.role;
+  console.log('🚪 [AUTH] Logout API called - User ID:', userId);
+
+  // If a teacher logs out, end all their active attendance sessions
+  if (userRole === 'teacher') {
+    try {
+      const AttendancePayload = require('../models/AttendancePayload');
+      const result = await AttendancePayload.updateMany(
+        {
+          teacherId: userId,
+          'payload.status': { $ne: 'ended' }
+        },
+        {
+          $set: {
+            'payload.status': 'ended',
+            'payload.endedAt': new Date()
+          }
+        }
+      );
+      if (result.modifiedCount > 0) {
+        console.log(`✅ Ended ${result.modifiedCount} active session(s) for teacher ${userId}`);
+      }
+    } catch (err) {
+      console.error('❌ Failed to end sessions on logout:', err.message);
+    }
+  }
+
   return sendSuccess(res, 200, 'Logged out successfully');
 };
 

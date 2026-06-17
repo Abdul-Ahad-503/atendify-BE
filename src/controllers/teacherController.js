@@ -601,18 +601,79 @@ const getDashboard = async (req, res) => {
     }
     
     const totalStudents = Object.values(enrolledStudentCounts).reduce((sum, count) => sum + count, 0);
+
+    // Compute real active sessions by checking AttendancePayload
+    const AttendancePayload = require('../models/AttendancePayload');
+    const meetingIds = allMeetings.map(m => m._id.toString());
+    const activePayloads = await AttendancePayload.find({
+      classId: { $in: meetingIds },
+      'payload.status': { $ne: 'ended' }
+    }).sort({ createdAt: -1 });
+
+    const activeSessionsMap = new Map();
+    for (const p of activePayloads) {
+      if (!activeSessionsMap.has(p.classId)) {
+        activeSessionsMap.set(p.classId, p);
+      }
+    }
+
+    const Attendance = require('../models/Attendance');
+    let totalPresentToday = 0;
+    let totalClassesHeld = 0;
+    let totalAttendanceSum = 0;
+
+    for (const meeting of allMeetings) {
+      const records = await Attendance.find({ meetingId: meeting._id });
+      if (records.length > 0) totalClassesHeld++;
+      const presentCount = records.filter(r => r.status === 'present' || r.status === 'late').length;
+      totalPresentToday += presentCount;
+      const meetingTotal = enrolledStudentCounts[meeting.offeringId?._id?.toString()] || 1;
+      if (records.length > 0) {
+        totalAttendanceSum += Math.round((presentCount / Math.max(records.length, meetingTotal)) * 100);
+      }
+    }
+
+    const avgAttendance = totalClassesHeld > 0 ? Math.round(totalAttendanceSum / totalClassesHeld) : 0;
+
+    // Build active sessions with real counts
+    const activeSessions = [];
+    for (const [classId, payload] of activeSessionsMap) {
+      const meeting = allMeetings.find(m => String(m._id) === classId);
+      if (!meeting || !meeting.offeringId) continue;
+
+      const records = await Attendance.find({ meetingId: meeting._id });
+      const presentCount = records.filter(r => r.status === 'present' || r.status === 'late').length;
+      const offeringIdStr = meeting.offeringId._id?.toString();
+
+      activeSessions.push({
+        id: payload._id,
+        course: {
+          id: meeting.offeringId.courseId?._id,
+          courseCode: meeting.offeringId.courseId?.code,
+          courseName: meeting.offeringId.courseId?.name
+        },
+        startTime: payload.createdAt || new Date(),
+        room: { roomNumber: meeting.roomNo },
+        totalPresent: presentCount,
+        totalStudentsEnrolled: enrolledStudentCounts[offeringIdStr] || 0,
+        section: meeting.offeringId.section,
+        semester: meeting.offeringId.semester
+      });
+    }
     
     sendSuccess(res, 200, 'Dashboard data retrieved successfully', {
       upcomingClasses,
       todayClasses,
-      activeSessions: [], // TODO: Implement when Session model is created
-      recentSessions: [], // TODO: Implement when Session model is created
-      notifications: [], // TODO: Implement when Notification model is created
+      activeSessions,
+      recentSessions: [],
+      notifications: [],
       stats: {
         totalCourses: offerings.length,
         totalStudents,
         classesToday: todayClasses.length,
-        activeSessionsCount: 0 // TODO: Count active sessions when implemented
+        avgAttendance,
+        totalPresentToday,
+        activeSessionsCount: activeSessions.length
       }
     });
     
