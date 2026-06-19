@@ -64,6 +64,7 @@ const findEnrolledStudents = async (offeringId) => {
  * @param {Object} params.studentLocation - { latitude, longitude }
  * @param {Object} params.classLocation - { latitude, longitude }
  * @param {number} params.radiusMeters - Acceptable radius in meters (default 10)
+ * @param {Date} params.sessionStartTime - When the teacher started the session (for late threshold)
  * @param {Object} params.metadata - { deviceInfo, notes, requestPayload }
  * @returns {Object} Attendance record
  */
@@ -73,7 +74,8 @@ const markAttendance = async ({
     studentLocation,
     classLocation,
     radiusMeters = 10,
-    lateThresholdMinutes = 15,
+    lateThresholdMinutes = 5,
+    sessionStartTime,
     metadata = {}
 }) => {
     try {
@@ -118,10 +120,11 @@ const markAttendance = async ({
             status = 'absent';
         } else {
             const now = new Date();
-            const markMinutes = now.getHours() * 60 + now.getMinutes();
-            const lateCutoff = meeting.startMinutes + lateThresholdMinutes;
+            const sessionStart = sessionStartTime ? new Date(sessionStartTime) : new Date();
+            const elapsedMs = now.getTime() - sessionStart.getTime();
+            const elapsedMinutes = elapsedMs / (1000 * 60);
 
-            if (markMinutes <= lateCutoff) {
+            if (elapsedMinutes <= lateThresholdMinutes) {
                 status = 'present';
             } else {
                 status = 'late';

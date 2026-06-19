@@ -22,7 +22,7 @@ const mongoose = require('mongoose');
  */
 const startAttendanceSession = async (req, res) => {
     try {
-        const { meetingId, location, details, deviceInfo } = req.body;
+        const { meetingId, location, details, deviceInfo, radiusMeters } = req.body;
         const teacherId = req.user._id;
 
         // Validate required fields
@@ -42,6 +42,12 @@ const startAttendanceSession = async (req, res) => {
 
         if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
             return sendError(res, 400, 'location.latitude and location.longitude must be valid numbers');
+        }
+
+        // Validate radiusMeters
+        const sessionRadius = radiusMeters !== undefined ? Number(radiusMeters) : 10;
+        if (!Number.isFinite(sessionRadius) || sessionRadius < 5 || sessionRadius > 30) {
+            return sendError(res, 400, 'radiusMeters must be a valid number between 5 and 30');
         }
 
         // Verify meeting exists and belongs to this teacher
@@ -81,6 +87,7 @@ const startAttendanceSession = async (req, res) => {
                 action: 'START_ATTENDANCE_SESSION',
                 meetingId,
                 location: { latitude: latNum, longitude: lonNum },
+                radiusMeters: sessionRadius,
                 details,
                 deviceInfo,
                 enrolledStudentsCount: enrolledStudents.length,
@@ -99,6 +106,7 @@ const startAttendanceSession = async (req, res) => {
         return sendSuccess(res, 200, 'Attendance session started successfully', {
             sessionId: String(attendanceSession._id),
             meetingId: String(meetingId),
+            radiusMeters: sessionRadius,
             enrolledStudentsCount: enrolledStudents.length,
             studentsToNotify: enrolledStudents.map(s => ({
                 studentId: String(s._id),
@@ -120,7 +128,7 @@ const startAttendanceSession = async (req, res) => {
  */
 const markStudentAttendance = async (req, res) => {
     try {
-        const { meetingId, location, radiusMeters = 10, deviceInfo } = req.body;
+        const { meetingId, location, deviceInfo } = req.body;
         const studentId = req.user._id;
 
         // Validate required fields
@@ -142,10 +150,6 @@ const markStudentAttendance = async (req, res) => {
             return sendError(res, 400, 'location.latitude and location.longitude must be valid numbers');
         }
 
-        if (!Number.isFinite(radiusMeters) || radiusMeters < 5) {
-            return sendError(res, 400, 'radiusMeters must be a valid number >= 5');
-        }
-
         // Fetch meeting with location info (assume room has coordinates stored elsewhere or use default)
         const meeting = await Meeting.findById(meetingId).populate('offeringId');
         if (!meeting) {
@@ -162,8 +166,7 @@ const markStudentAttendance = async (req, res) => {
             return sendError(res, 403, 'You are not enrolled in this course');
         }
 
-        // For now, use teacher's location as class location (in future, store room coordinates)
-        // Get teacher's latest location from recent attendance payload
+        // Get teacher's session payload for location and radius
         const teacherPayload = await AttendancePayload.findOne({
             teacherId: meeting.teacherId,
             classId: String(meetingId)
@@ -173,15 +176,27 @@ const markStudentAttendance = async (req, res) => {
             return sendError(res, 400, 'Teacher has not started attendance session yet');
         }
 
+        // Use the radius configured by the teacher when starting the session
+        const sessionRadius = teacherPayload.payload.radiusMeters || 10;
+        if (!Number.isFinite(sessionRadius) || sessionRadius < 5 || sessionRadius > 30) {
+            return sendError(res, 400, 'Invalid session radius configuration');
+        }
+
+        // Use the actual session start time for late threshold
+        const sessionStartTime = teacherPayload.payload.timestamp
+            ? new Date(teacherPayload.payload.timestamp)
+            : new Date(teacherPayload.createdAt);
+
         const classLocation = teacherPayload.payload.location;
 
-        // Mark attendance
+        // Mark attendance using teacher's configured radius and session start time
         const attendance = await markAttendance({
             meetingId: new mongoose.Types.ObjectId(meetingId),
             studentId: new mongoose.Types.ObjectId(studentId),
             studentLocation: { latitude: latNum, longitude: lonNum },
             classLocation: { latitude: classLocation.latitude, longitude: classLocation.longitude },
-            radiusMeters,
+            radiusMeters: sessionRadius,
+            sessionStartTime,
             metadata: { deviceInfo, requestPayload: req.body }
         });
 
@@ -506,6 +521,63 @@ const getTeacherHistory = async (req, res) => {
     }
 };
 
+/**
+ * Get all active session IDs for a student's today's classes
+ * GET /api/attendance/student/active-sessions
+ */
+const getStudentActiveSessions = async (req, res) => {
+    try {
+        const student = req.user;
+
+        const activeTerm = await require('../models/Term').findOne({ isActive: true });
+        if (!activeTerm) {
+            return sendSuccess(res, 200, 'No active sessions', { activeSessionIds: [] });
+        }
+
+        // Find today's offerings for this student's cohort
+        const offerings = await require('../models/CourseOffering').find({
+            programId: student.programId,
+            semester: student.semester,
+            section: student.section ? student.section.toUpperCase() : undefined,
+            termId: activeTerm._id,
+            status: 'published'
+        }).select('_id');
+
+        const offeringIds = offerings.map(o => o._id);
+        if (offeringIds.length === 0) {
+            return sendSuccess(res, 200, 'No active sessions', { activeSessionIds: [] });
+        }
+
+        // Get today's meetings
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const today = days[new Date().getDay()];
+
+        const todayMeetings = await require('../models/Meeting').find({
+            offeringId: { $in: offeringIds },
+            day: today
+        }).select('_id');
+
+        const meetingIds = todayMeetings.map(m => String(m._id));
+        if (meetingIds.length === 0) {
+            return sendSuccess(res, 200, 'No active sessions', { activeSessionIds: [] });
+        }
+
+        // Find active (non-ended) sessions for these meetings
+        const activeSessions = await require('../models/AttendancePayload').find({
+            classId: { $in: meetingIds },
+            'payload.status': { $ne: 'ended' },
+            'payload.action': 'START_ATTENDANCE_SESSION'
+        }).select('classId');
+
+        const activeSessionIds = [...new Set(activeSessions.map(s => s.classId))];
+
+        return sendSuccess(res, 200, 'Active sessions fetched', { activeSessionIds });
+    } catch (error) {
+        console.error('❌ [ATTENDANCE] Error fetching student active sessions:', error.message);
+        return sendError(res, 500, 'Failed to fetch active sessions', [error.message]);
+    }
+};
+
 module.exports = {
     startAttendanceSession,
     markStudentAttendance,
@@ -516,5 +588,6 @@ module.exports = {
     endAttendanceSession,
     checkActiveSession,
     sendTestNotification,
-    getTeacherHistory
+    getTeacherHistory,
+    getStudentActiveSessions
 };

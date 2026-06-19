@@ -11,7 +11,8 @@ const {
     endAttendanceSession,
     checkActiveSession,
     sendTestNotification,
-    getTeacherHistory
+    getTeacherHistory,
+    getStudentActiveSessions
 } = require('../controllers/attendanceController');
 
 // ============ TEACHER ROUTES ============
@@ -32,6 +33,9 @@ router.post('/test/notify-student', sendTestNotification);
 
 // Student marks attendance for a meeting
 router.post('/student/mark', protect, authorize('student'), markStudentAttendance);
+
+// Get all active sessions for the student's today's classes
+router.get('/student/active-sessions', protect, authorize('student'), getStudentActiveSessions);
 
 // Get student's attendance history 
 router.get('/student/history', protect, authorize('student'), getStudentHistory);
