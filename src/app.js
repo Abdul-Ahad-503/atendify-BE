@@ -9,7 +9,8 @@ const authRoutes = require('./routes/authRoutes');
 const teacherRoutes = require('./routes/teacherRoutes');
 const studentRoutes = require('./routes/studentRoutes');
 const attendanceRoutes = require('./routes/attendanceRoutes');
-const userRoutes = require('./routes/userRoutes'); // 👈 ADD THIS LINE
+const userRoutes = require('./routes/userRoutes');
+const dataRoutes = require('./routes/dataRoutes');
 
 // Import middleware
 const { errorHandler, notFound } = require('./middleware/errorMiddleware');
@@ -72,6 +73,7 @@ app.use('/api/student', studentRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/attendance', attendanceRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api', dataRoutes);
 
 // Welcome route
 app.get('/', (req, res) => {
