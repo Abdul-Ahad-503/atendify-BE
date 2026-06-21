@@ -101,24 +101,6 @@ const seedData = async () => {
         startDate: new Date('2026-07-01'),
         endDate: new Date('2026-08-31'),
         isActive: false
-      },
-      {
-        name: 'spring-2026',
-        startDate: new Date('2026-02-01'),
-        endDate: new Date('2026-06-30'),
-        isActive: true
-      },
-      {
-        name: 'fall-2025',
-        startDate: new Date('2025-09-01'),
-        endDate: new Date('2026-01-31'),
-        isActive: false
-      },
-      {
-        name: 'summer-2026',
-        startDate: new Date('2026-07-01'),
-        endDate: new Date('2026-08-31'),
-        isActive: false
       }
     ]);
     console.log(`✅ Created ${terms.length} terms\n`);
