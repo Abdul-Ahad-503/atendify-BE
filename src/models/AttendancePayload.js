@@ -21,6 +21,12 @@ const attendancePayloadSchema = new mongoose.Schema(
         payload: {
             type: mongoose.Schema.Types.Mixed,
             required: true
+        },
+        sessionTimeoutMinutes: {
+            type: Number,
+            default: 50, // Auto-end session after 50 minutes of inactivity
+            min: 5,
+            max: 120
         }
     },
     {

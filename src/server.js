@@ -39,6 +39,10 @@ const startServer = async () => {
     // Create default admin after DB connection is established
     await createDefaultAdmin();
     
+    // Start session timeout checker
+    const { startSessionTimeoutChecker } = require('./scripts/sessionTimeout');
+    startSessionTimeoutChecker();
+    
     // Start server
     const server = app.listen(PORT, () => {
       console.log('='.repeat(50));

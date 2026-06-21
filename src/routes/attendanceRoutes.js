@@ -28,6 +28,9 @@ router.post('/teacher/mark', protect, authorize('teacher'), markTeacherAttendanc
 router.post('/session/:sessionId/end', protect, endAttendanceSession);
 router.post('/test/notify-student', sendTestNotification);
 
+// Teacher: Update attendance status after session ends
+router.patch('/meeting/:meetingId/attendance/:attendanceId/status', protect, authorize('teacher'), updateAttendanceStatus);
+
 
 // ============ STUDENT ROUTES ============
 

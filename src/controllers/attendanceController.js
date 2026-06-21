@@ -619,6 +619,84 @@ const getStudentActiveSessions = async (req, res) => {
     }
 };
 
+/**
+ * Teacher: Update attendance status after session ends
+ * PATCH /api/attendance/meeting/:meetingId/attendance/:attendanceId/status
+ */
+const updateAttendanceStatus = async (req, res) => {
+    try {
+        const { meetingId, attendanceId } = req.params;
+        const { status, reason } = req.body;
+        const teacherId = req.user._id;
+
+        // Validate status
+        const validStatuses = ['present', 'absent', 'late'];
+        if (!validStatuses.includes(status)) {
+            return sendError(res, 400, 'Invalid status. Must be present, absent, or late');
+        }
+
+        // Check if session has ended
+        const session = await AttendancePayload.findOne({
+            classId: String(meetingId)
+        }).sort({ createdAt: -1 });
+
+        if (!session || session.payload.status === 'ended') {
+            // Session has ended, allow update
+        } else {
+            // Session is still active, check if teacher started it
+            if (String(session.teacherId) !== String(teacherId)) {
+                return sendError(res, 403, 'You did not start this session');
+            }
+        }
+
+        // Find attendance record
+        const attendance = await require('../models/Attendance').findById(attendanceId);
+
+        if (!attendance) {
+            return sendError(res, 404, 'Attendance record not found');
+        }
+
+        // Verify teacher owns the meeting
+        const meeting = await Meeting.findById(meetingId);
+        if (!meeting) {
+            return sendError(res, 404, 'Meeting not found');
+        }
+
+        if (String(meeting.teacherId) !== String(teacherId)) {
+            return sendError(res, 403, 'Unauthorized: You did not start this session');
+        }
+
+        // Verify attendance belongs to this meeting
+        if (String(attendance.meetingId) !== String(meetingId)) {
+            return sendError(res, 403, 'Attendance record does not belong to this meeting');
+        }
+
+        // Update attendance status
+        const oldStatus = attendance.status;
+        attendance.status = status;
+        attendance.notes = reason || `Status changed from ${oldStatus} to ${status}`;
+        await attendance.save();
+
+        console.log('✅ [ATTENDANCE] Teacher updated attendance status', {
+            meetingId: String(meetingId),
+            attendanceId: String(attendanceId),
+            studentId: String(attendance.studentId),
+            oldStatus,
+            newStatus: status
+        });
+
+        return sendSuccess(res, 200, 'Attendance status updated successfully', {
+            attendanceId: String(attendance._id),
+            oldStatus,
+            newStatus: status,
+            reason
+        });
+    } catch (error) {
+        console.error('❌ [ATTENDANCE] Error updating attendance status:', error.message);
+        return sendError(res, 500, 'Failed to update attendance status', [error.message]);
+    }
+};
+
 module.exports = {
     startAttendanceSession,
     markStudentAttendance,
@@ -630,5 +708,6 @@ module.exports = {
     checkActiveSession,
     sendTestNotification,
     getTeacherHistory,
-    getStudentActiveSessions
+    getStudentActiveSessions,
+    updateAttendanceStatus
 };

@@ -1,14 +1,31 @@
 const { initializeApp, cert, getApps } = require('firebase-admin/app');
 const { getMessaging } = require('firebase-admin/messaging');
-const serviceAccount = require('../../service-account.json');
 
-if (getApps().length === 0) {
-  initializeApp({
-    credential: cert(serviceAccount)
-  });
+// Initialize Firebase Admin
+let messaging;
+try {
+  const serviceAccount = require('../../service-account.json');
+
+  if (getApps().length === 0) {
+    initializeApp({
+      credential: cert(serviceAccount)
+    });
+  }
+
+  messaging = getMessaging();
+  console.log('✅ [PUSH] Firebase initialized successfully');
+} catch (error) {
+  console.error('❌ [PUSH] Firebase initialization failed:', error.message);
+  console.log('⚠️ [PUSH] Push notifications will be disabled');
+  messaging = null;
 }
 
 const sendAttendancePush = async (students, meetingId, details, teacherId = null) => {
+  if (!messaging) {
+    console.log('⚠️ [PUSH] Firebase not initialized, skipping push notifications');
+    return;
+  }
+
   console.log('🔔 [PUSH] Called with', students.length, 'students');
 
   // Defensive filter — exclude the teacher from recipients (in case query returns them)
@@ -26,7 +43,7 @@ const sendAttendancePush = async (students, meetingId, details, teacherId = null
   console.log('🔔 [PUSH] Tokens found:', tokens.length);
 
   if (tokens.length === 0) {
-    console.log('⚠️ [PUSH] No tokens, skipping');
+    console.log('⚠️ [PUSH] No tokens available, skipping');
     return;
   }
 
@@ -83,7 +100,7 @@ const sendAttendancePush = async (students, meetingId, details, teacherId = null
   };
 
   try {
-    const response = await getMessaging().sendEachForMulticast(message);
+    const response = await messaging.sendEachForMulticast(message);
     console.log('✅ [PUSH] Success:', response.successCount);
     console.log('❌ [PUSH] Failed:', response.failureCount);
     response.responses.forEach((r, i) => {
