@@ -58,6 +58,7 @@ const findEnrolledStudents = async (offeringId) => {
 /**
  * Mark attendance for a student
  * Validates location based on radius and creates attendance record
+ * Supports multiple attendance records per meeting (different sessions)
  * @param {Object} params
  * @param {ObjectId} params.meetingId
  * @param {ObjectId} params.studentId
@@ -65,6 +66,7 @@ const findEnrolledStudents = async (offeringId) => {
  * @param {Object} params.classLocation - { latitude, longitude }
  * @param {number} params.radiusMeters - Acceptable radius in meters (default 10)
  * @param {Date} params.sessionStartTime - When the teacher started the session (for late threshold)
+ * @param {ObjectId} params.sessionId - The attendance session ID (optional)
  * @param {Object} params.metadata - { deviceInfo, notes, requestPayload }
  * @returns {Object} Attendance record
  */
@@ -76,6 +78,7 @@ const markAttendance = async ({
     radiusMeters = 10,
     lateThresholdMinutes = 5,
     sessionStartTime,
+    sessionId = null,
     metadata = {}
 }) => {
     try {
@@ -134,13 +137,14 @@ const markAttendance = async ({
         // Get term
         const term = await Term.findById(meeting.termId);
 
-        // Create attendance record
+        // Create attendance record with session ID
         const attendance = await Attendance.create({
             meetingId,
             offeringId: offering._id,
             studentId,
             teacherId: meeting.teacherId,
             termId: meeting.termId,
+            sessionId,
             status,
             studentLocation: {
                 type: 'Point',

@@ -13,7 +13,7 @@ const { isTimeOverlap } = require('../utils/timeUtils');
  * @param {Number} params.startMinutes - Start time in minutes
  * @param {Number} params.endMinutes - End time in minutes
  * @param {ObjectId} params.excludeMeetingId - Meeting ID to exclude (for updates)
- * @throws {Error} If room conflict exists
+ * @returns {Object} { isValid: boolean, conflict: string | null, availableSlots: Array }
  */
 const validateNoRoomConflict = async ({ termId, day, roomNo, startMinutes, endMinutes, excludeMeetingId = null }) => {
   const query = {
@@ -21,22 +21,28 @@ const validateNoRoomConflict = async ({ termId, day, roomNo, startMinutes, endMi
     day,
     roomNo: roomNo.toUpperCase()
   };
-  
+
   if (excludeMeetingId) {
     query._id = { $ne: excludeMeetingId };
   }
-  
+
   // Find all meetings in the same room on the same day
   const existingMeetings = await Meeting.find(query).select('startMinutes endMinutes timeStart timeEnd roomNo');
-  
+
   // Check for time overlap
   for (const meeting of existingMeetings) {
     if (isTimeOverlap(startMinutes, endMinutes, meeting.startMinutes, meeting.endMinutes)) {
-      throw new Error(
-        `Room conflict: ${roomNo} is already booked on ${day} from ${meeting.timeStart} to ${meeting.timeEnd}`
-      );
+      // Get available slots (1-12)
+      const availableSlots = getAvailableSlots(existingMeetings, day);
+      return {
+        isValid: false,
+        conflict: `Room ${roomNo} is already booked on ${day}. Available time slots: ${availableSlots.join(', ')}`,
+        availableSlots
+      };
     }
   }
+
+  return { isValid: true, conflict: null, availableSlots: [] };
 };
 
 /**
@@ -49,7 +55,7 @@ const validateNoRoomConflict = async ({ termId, day, roomNo, startMinutes, endMi
  * @param {Number} params.startMinutes - Start time in minutes
  * @param {Number} params.endMinutes - End time in minutes
  * @param {ObjectId} params.excludeMeetingId - Meeting ID to exclude (for updates)
- * @throws {Error} If teacher conflict exists
+ * @returns {Object} { isValid: boolean, conflict: string | null, availableSlots: Array }
  */
 const validateNoTeacherConflict = async ({ termId, teacherId, day, startMinutes, endMinutes, excludeMeetingId = null }) => {
   const query = {
@@ -57,23 +63,69 @@ const validateNoTeacherConflict = async ({ termId, teacherId, day, startMinutes,
     teacherId,
     day
   };
-  
+
   if (excludeMeetingId) {
     query._id = { $ne: excludeMeetingId };
   }
-  
+
   // Find all meetings by the same teacher on the same day
   const existingMeetings = await Meeting.find(query).select('startMinutes endMinutes timeStart timeEnd');
-  
+
   // Check for time overlap
   for (const meeting of existingMeetings) {
     if (isTimeOverlap(startMinutes, endMinutes, meeting.startMinutes, meeting.endMinutes)) {
-      throw new Error(
-        `Teacher conflict: You already have a class on ${day} from ${meeting.timeStart} to ${meeting.timeEnd}`
-      );
+      // Get available slots (1-12)
+      const availableSlots = getAvailableSlots(existingMeetings, day);
+      return {
+        isValid: false,
+        conflict: `You already have a class on ${day}. Available time slots: ${availableSlots.join(', ')}`,
+        availableSlots
+      };
     }
   }
+
+  return { isValid: true, conflict: null, availableSlots: [] };
 };
+
+/**
+ * Get available time slots (1-12) for a given day
+ * 
+ * @param {Array} existingMeetings - Array of existing meetings
+ * @param {String} day - Day of week
+ * @returns {Array} Array of available slot numbers
+ */
+function getAvailableSlots(existingMeetings, day) {
+  // Slot range is 1-12 (morning + afternoon)
+  const availableSlots = [];
+
+  for (let slot = 1; slot <= 12; slot++) {
+    const slotStartMinutes = slot * 60;
+    const slotEndMinutes = (slot + 1) * 60;
+
+    // Check if this slot is already booked
+    const isSlotBooked = existingMeetings.some(meeting => {
+      // If meeting spans multiple slots, it occupies all those slots
+      if (meeting.startMinutes < slotStartMinutes && meeting.endMinutes > slotEndMinutes) {
+        return true;
+      }
+      // If meeting starts in this slot
+      if (meeting.startMinutes >= slotStartMinutes && meeting.startMinutes < slotEndMinutes) {
+        return true;
+      }
+      // If meeting ends in this slot
+      if (meeting.endMinutes > slotStartMinutes && meeting.endMinutes <= slotEndMinutes) {
+        return true;
+      }
+      return false;
+    });
+
+    if (!isSlotBooked) {
+      availableSlots.push(slot);
+    }
+  }
+
+  return availableSlots;
+}
 
 /**
  * Enforce credit hours limit - meetings per offering must not exceed course credit hours

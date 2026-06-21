@@ -124,11 +124,12 @@ const startAttendanceSession = async (req, res) => {
 /**
  * Student marks attendance for a meeting
  * Validates location within acceptable radius and creates attendance record
+ * Supports multiple attendance records per meeting (different sessions)
  * POST /api/attendance/student/mark
  */
 const markStudentAttendance = async (req, res) => {
     try {
-        const { meetingId, location, deviceInfo } = req.body;
+        const { meetingId, location, sessionId, deviceInfo } = req.body;
         const studentId = req.user._id;
 
         // Validate required fields
@@ -189,6 +190,19 @@ const markStudentAttendance = async (req, res) => {
 
         const classLocation = teacherPayload.payload.location;
 
+        // Check if student already has attendance for this session
+        if (sessionId) {
+            const existingAttendance = await Attendance.findOne({
+                meetingId: new mongoose.Types.ObjectId(meetingId),
+                studentId: new mongoose.Types.ObjectId(studentId),
+                sessionId: new mongoose.Types.ObjectId(sessionId)
+            });
+
+            if (existingAttendance) {
+                return sendError(res, 400, 'Attendance already marked for this session');
+            }
+        }
+
         // Mark attendance using teacher's configured radius and session start time
         const attendance = await markAttendance({
             meetingId: new mongoose.Types.ObjectId(meetingId),
@@ -197,12 +211,14 @@ const markStudentAttendance = async (req, res) => {
             classLocation: { latitude: classLocation.latitude, longitude: classLocation.longitude },
             radiusMeters: sessionRadius,
             sessionStartTime,
+            sessionId: sessionId ? new mongoose.Types.ObjectId(sessionId) : null,
             metadata: { deviceInfo, requestPayload: req.body }
         });
 
         console.log('✅ [ATTENDANCE] Student marked attendance', {
             studentId: String(studentId),
             meetingId: String(meetingId),
+            sessionId: sessionId ? String(sessionId) : 'N/A',
             status: attendance.status,
             distance: `${attendance.distanceMeters}m`,
             withinRadius: attendance.withinRadius
@@ -254,11 +270,11 @@ const getAttendanceByMeeting = async (req, res) => {
 
 /**
  * Get student's attendance history
- * GET /api/attendance/student/history
+ * GET /api/attendance/student/history?page=1&limit=10
  */
 const getStudentHistory = async (req, res) => {
     try {
-        const { termId, offeringId, startDate, endDate } = req.query;
+        const { termId, offeringId, startDate, endDate, page = '1', limit = '10' } = req.query;
         const studentId = req.user._id;
 
         const filters = {};
@@ -267,11 +283,23 @@ const getStudentHistory = async (req, res) => {
         if (startDate) filters.startDate = startDate;
         if (endDate) filters.endDate = endDate;
 
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+
         const history = await getStudentAttendanceHistory(studentId, filters);
+        const total = history.length;
+        const totalPages = Math.ceil(total / limitNum);
+        const paginatedRecords = history.slice(skip, skip + limitNum);
 
         return sendSuccess(res, 200, 'Attendance history retrieved', {
-            total: history.length,
-            records: history
+            pagination: {
+                total,
+                page: pageNum,
+                limit: limitNum,
+                totalPages
+            },
+            records: paginatedRecords
         });
     } catch (error) {
         console.error('❌ [ATTENDANCE] Error fetching history:', error.message);
@@ -498,11 +526,11 @@ const sendTestNotification = async (req, res) => {
 
 /**
  * Get teacher's attendance history
- * GET /api/attendance/teacher/history
+ * GET /api/attendance/teacher/history?page=1&limit=10
  */
 const getTeacherHistory = async (req, res) => {
     try {
-        const { startDate, endDate, offeringId } = req.query;
+        const { startDate, endDate, offeringId, page = '1', limit = '10' } = req.query;
         const teacherId = req.user._id;
 
         const filters = {};
@@ -510,10 +538,23 @@ const getTeacherHistory = async (req, res) => {
         if (startDate) filters.startDate = startDate;
         if (endDate) filters.endDate = endDate;
 
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+
         const history = await getTeacherAttendanceHistory(teacherId, filters);
+        const total = history.length;
+        const totalPages = Math.ceil(total / limitNum);
+        const paginatedRecords = history.slice(skip, skip + limitNum);
+
         return sendSuccess(res, 200, 'Teacher attendance history retrieved', {
-            total: history.length,
-            records: history
+            pagination: {
+                total,
+                page: pageNum,
+                limit: limitNum,
+                totalPages
+            },
+            records: paginatedRecords
         });
     } catch (error) {
         console.error('❌ [ATTENDANCE] Error fetching teacher history:', error.message);

@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 /**
  * Attendance Model
  * Stores actual attendance records with location validation and history
+ * Multiple attendance records can exist for the same meeting (different weeks)
  */
 const attendanceSchema = new mongoose.Schema(
     {
@@ -43,6 +44,14 @@ const attendanceSchema = new mongoose.Schema(
             type: String,
             enum: ['present', 'absent', 'late', 'marked'],
             default: 'marked',
+            index: true
+        },
+
+        // Session information (for multiple sessions per meeting)
+        sessionId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'AttendancePayload',
+            default: null,
             index: true
         },
 
@@ -133,9 +142,12 @@ attendanceSchema.index({ studentLocation: '2dsphere' });
 attendanceSchema.index({ classLocation: '2dsphere' });
 
 // Compound indexes for efficient queries
+// Allow multiple attendance records per meeting by removing unique constraint
 attendanceSchema.index({ meetingId: 1, studentId: 1, markedAt: 1 });
 attendanceSchema.index({ offeringId: 1, markedAt: 1 });
 attendanceSchema.index({ studentId: 1, markedAt: 1 });
 attendanceSchema.index({ termId: 1, markedAt: 1 });
+// Index for querying by session
+attendanceSchema.index({ sessionId: 1, meetingId: 1 });
 
 module.exports = mongoose.model('Attendance', attendanceSchema);
