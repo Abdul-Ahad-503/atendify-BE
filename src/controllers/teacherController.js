@@ -162,7 +162,7 @@ const createOffering = async (req, res) => {
       courseId: course._id,
       teacherId,
       group: group || 'MAIN',
-      status: 'draft'
+      status: 'published'
     });
     
     // Populate for response
@@ -400,30 +400,40 @@ const getMyTimetable = async (req, res) => {
     
     // Build query
     const query = { teacherId };
+    
+    // Handle term - create active term if none exists
+    let term = null;
     if (termId) {
-      // Handle termId as name or ObjectId
-      let term;
       if (mongoose.Types.ObjectId.isValid(termId)) {
         term = await Term.findById(termId);
       } else {
         term = await Term.findOne({ name: new RegExp(`^${termId}$`, 'i') });
       }
-      
-      if (term) {
-        query.termId = term._id;
-      } else {
-        // If no term found, use active term
-        const activeTerm = await Term.findOne({ isActive: true });
-        if (activeTerm) query.termId = activeTerm._id;
-      }
-    } else {
-      // Default to active term
-      const activeTerm = await Term.findOne({ isActive: true });
-      if (activeTerm) query.termId = activeTerm._id;
     }
     
-    // Get all meetings for this teacher
-    const meetings = await Meeting.find(query)
+    if (term) {
+      query.termId = term._id;
+    } else {
+      // Try active term
+      let activeTerm = await Term.findOne({ isActive: true });
+      if (!activeTerm) {
+        // Create a default active term
+        const now = new Date();
+        const year = now.getFullYear();
+        const season = now.getMonth() < 6 ? 'Spring' : 'Fall';
+        activeTerm = await Term.create({
+          name: `${season}-${year}`,
+          startDate: new Date(year, now.getMonth() < 6 ? 1 : 8, 1),
+          endDate: new Date(year, now.getMonth() < 6 ? 6 : 12, 31),
+          isActive: true
+        });
+        console.log('✅ Created default active term:', activeTerm.name);
+      }
+      query.termId = activeTerm._id;
+    }
+    
+    // Get all meetings for this teacher (no term filter - show all)
+    let meetings = await Meeting.find({ teacherId })
       .populate({
         path: 'offeringId',
         populate: [
@@ -511,19 +521,38 @@ const getDashboard = async (req, res) => {
       return sendError(res, 403, 'Only teachers can access this endpoint');
     }
     
-    // Get active term
-    const activeTerm = await Term.findOne({ isActive: true });
+    // Get active term - create default if none exists
+    let activeTerm = await Term.findOne({ isActive: true });
     if (!activeTerm) {
-      return sendError(res, 404, 'No active term found');
+      // Create a default active term
+      const now = new Date();
+      const year = now.getFullYear();
+      const season = now.getMonth() < 6 ? 'Spring' : 'Fall';
+      activeTerm = await Term.create({
+        name: `${season}-${year}`,
+        startDate: new Date(year, now.getMonth() < 6 ? 1 : 8, 1),
+        endDate: new Date(year, now.getMonth() < 6 ? 6 : 12, 31),
+        isActive: true
+      });
+      console.log('✅ Created default active term:', activeTerm.name);
     }
     
-    // Get teacher's offerings
-    const offerings = await CourseOffering.find({
-      teacherId: teacher._id,
-      termId: activeTerm._id
+    // Get teacher's offerings - try active term first, fallback to all if none
+    let offerings = await CourseOffering.find({
+      teacherId: teacher._id
     })
       .populate('courseId', 'code name creditHours')
       .populate('programId', 'code name');
+    
+    // If no offerings found, try active term
+    if (offerings.length === 0 && activeTerm) {
+      offerings = await CourseOffering.find({
+        teacherId: teacher._id,
+        termId: activeTerm._id
+      })
+        .populate('courseId', 'code name creditHours')
+        .populate('programId', 'code name');
+    }
     
     // Get all meetings for these offerings
     const offeringIds = offerings.map(o => o._id);

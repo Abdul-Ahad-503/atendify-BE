@@ -12,8 +12,13 @@ const {
     checkActiveSession,
     sendTestNotification,
     getTeacherHistory,
-    getStudentActiveSessions
+    getStudentActiveSessions,
+    updateAttendanceStatus
 } = require('../controllers/attendanceController');
+const {
+    trackStudentLocation,
+    getActiveStudentSession
+} = require('../services/studentSessionService');
 
 // ============ TEACHER ROUTES ============
 
@@ -45,6 +50,14 @@ router.get('/student/history', protect, authorize('student'), getStudentHistory)
 
 // Teacher attendance history
 router.get('/teacher/history', protect, authorize('teacher'), getTeacherHistory);
+
+// ============ STUDENT SESSION TRACKING ============
+
+// Student tracks their location during active session
+router.post('/student/track-location', protect, authorize('student'), trackStudentLocation);
+
+// Get active session for a student
+router.get('/student/active-session/:meetingId', protect, authorize('student'), getActiveStudentSession);
 
 // ============ SHARED/QUERY ROUTES ============
 

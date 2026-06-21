@@ -23,6 +23,7 @@ router.get('/dashboard', protect, authorize('teacher'), getDashboard);
 // Course Offerings
 router.post('/offerings', protect, authorize('teacher'), createOffering);
 router.get('/me/offerings', protect, authorize('teacher'), getMyOfferings);
+router.get('/offerings', protect, authorize('teacher'), getMyOfferings); // Also support without /me
 router.patch('/offerings/:id/publish', protect, authorize('teacher'), publishOffering);
 
 // Timetable

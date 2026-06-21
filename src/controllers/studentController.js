@@ -65,12 +65,11 @@ const getDashboard = async (req, res) => {
       return sendError(res, 404, 'No active term found');
     }
     
-    // Get student's offerings
+    // Get student's offerings - show all published offerings for this cohort
     const offerings = await CourseOffering.find({
       programId: student.programId,
       semester: student.semester,
       section: student.section.toUpperCase(),
-      termId: activeTerm._id,
       status: 'published'
     })
       .populate('courseId', 'code name creditHours')
@@ -243,7 +242,7 @@ const getMyTimetable = async (req, res) => {
       return sendError(res, 400, 'Student profile is incomplete. Please update your program, semester, and section');
     }
     
-    // Build query
+    // Build query - show all published offerings for this cohort
     const query = {
       programId: student.programId,
       semester: student.semester,
@@ -251,7 +250,7 @@ const getMyTimetable = async (req, res) => {
       status: 'published' // Only show published offerings
     };
 
-    // Resolve term by ObjectId or name (same behavior as teacher endpoints)
+    // Resolve term if provided
     let resolvedTerm = null;
     if (termId) {
       if (mongoose.Types.ObjectId.isValid(termId)) {
@@ -264,14 +263,6 @@ const getMyTimetable = async (req, res) => {
         return sendError(res, 404, 'Term not found');
       }
       query.termId = resolvedTerm._id;
-    } else {
-      // If no termId provided, get active term
-      const activeTerm = await Term.findOne({ isActive: true });
-      if (!activeTerm) {
-        return sendError(res, 404, 'No active term found');
-      }
-      query.termId = activeTerm._id;
-      resolvedTerm = activeTerm;
     }
     
     // Fetch offerings
@@ -396,18 +387,20 @@ const getTimetableByCohort = async (req, res) => {
       return sendError(res, 404, 'Program not found');
     }
 
-    const resolvedTerm = await resolveTerm(termId);
-    if (!resolvedTerm) {
-      return sendError(res, 404, termId ? 'Term not found' : 'No active term found');
-    }
+    // Resolve term if provided, otherwise show all terms
+    const resolvedTerm = termId ? await resolveTerm(termId) : null;
 
     const query = {
       programId: programDoc._id,
       semester: semesterNumber,
       section: normalizedSection,
-      termId: resolvedTerm._id,
       status: 'published'
     };
+
+    // Only add termId filter if termId was provided
+    if (termId && resolvedTerm) {
+      query.termId = resolvedTerm._id;
+    }
 
     const offerings = await CourseOffering.find(query)
       .populate('courseId', 'code name creditHours description')
