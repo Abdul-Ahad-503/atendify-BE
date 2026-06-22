@@ -472,7 +472,7 @@ const getTimetableByCohort = async (req, res) => {
         programCode: programDoc.code,
         semester: semesterNumber,
         section: normalizedSection,
-        term: resolvedTerm.name
+        // term: resolvedTerm.name || 'N/A'
       },
       courses: timetable,
       byDay
